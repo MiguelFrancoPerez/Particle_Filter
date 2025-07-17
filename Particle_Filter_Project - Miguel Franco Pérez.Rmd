@@ -1,0 +1,791 @@
+---
+title: "Final Task"
+output: html_document
+date: "2025-07-11"
+---
+
+#0. Required Libraries
+
+```{r include=FALSE}
+library(mvtnorm)
+library(magick)
+library(scatterplot3d)
+library(caret)
+library(lubridate)
+library(av)
+```
+
+
+# 1. DATA GENERATION
+
+## 1.1 Parameters
+
+```{r}
+# PARAMETERS
+h_set<-10^-3
+  
+s_set<- 10
+r_set<- 28
+b_set<- 8/3
+
+P_0<-20*diag(3)
+sigma_set<-1
+sigma_u_set<-2
+
+T<-20000
+
+B<-10 #Observing Steps (en qué iteraciones discretas obtenemos la observación)
+
+M<-2500 #Number of particles
+
+# INITIAL VALUES FOR SIMULATION
+x1_0<- -5.9165
+x2_0<- -5.2333
+x3_0<- 24.5723
+
+x_0<-c(x1_0,x2_0,x3_0)
+names(x_0)<-c(paste0("X1[t=0]"),paste0("X2[t=0]"),paste0("X3[t=0]"))
+```
+
+## 1.2 State Transition function
+
+```{r}
+# STATE TRANSITION EQUATION X(t) -> X(t+1)
+
+Transit<-function(x1,x2,x3,h=h_set,sigma=sigma_set,r=r_set,b=b_set, s=s_set, t){
+  X1.<-x1-h*s*(x1-x2)+sigma*sqrt(h)*rnorm(n=1,mean=0,sd=1)
+  
+  X2.<-x2+h*(r*x1-x2-x1*x3)+sigma*sqrt(h)*rnorm(n=1,mean=0,sd=1)
+  
+  X3.<-x3+h*(x1*x2-b*x3)+sigma*sqrt(h)*rnorm(n=1,mean=0,sd=1)
+  
+  X<-c(X1., X2., X3.)
+  names(X)<-c(paste0("X1[t=",t+1,"]"),paste0("X2[t=",t+1,"]"),paste0("X3[t=",t+1,"]"))
+    
+  return(X)
+}
+
+```
+
+## 1.3 Observation function
+
+```{r}
+# OBSERVATION EQUATION X(t) -> Y(t)
+
+Observ<-function(x1,x2,x3,sigma_u=sigma_u_set, t){
+  Y1<-0.1*x1*x2+sigma_u*rnorm(n=1,mean=0,sd=1)
+  Y2<-0.1*x1*x3+sigma_u*rnorm(n=1,mean=0,sd=1)
+  
+  Y<-c(Y1,Y2)
+  names(Y)<-c(paste0("Y1[t=",t,"]"),paste0("Y2[t=",t,"]"))
+  
+  return(Y)
+}
+
+```
+
+## 1.4 Data Generation
+
+```{r}
+set.seed(7654321)
+
+x<-x_0
+
+Data<-matrix(nrow=T+1,ncol=5)
+colnames(Data)<-c("x1","x2","x3","y1","y2")
+
+Data[0,1:3]<-x_0
+
+printing<-FALSE
+
+for (t in 0:T){
+    if(printing==TRUE){
+  cat("t=",t, "\n ----------------------------------- \n")
+  
+  print(x)
+  cat("\n") 
+  }
+    
+  # Observation
+  Data[t+1,c(4:5)]<-y<-Observ(x1=x[1], x2=x[2], x3=x[3], t=t)
+    
+    if(printing==TRUE){
+  print(y)
+  cat("\n")
+    } 
+  
+  # State Transition
+  Data[t+1,1:3]<-x<-Transit(x1=x[1], x2=x[2], x3=x[3], t=t)
+}
+
+Full_Data<-Data
+
+Data[!(1:nrow(Data)) %% B == 0, 4:5] <- NA
+Data[1,4:5]<-Full_Data[1,4:5]
+
+Obs_Data<-Data[,4:5]
+```
+
+
+## 1.5 Visualization
+
+```{r}
+######################
+# STATE PLOT
+######################
+grafico<-scatterplot3d(x = Data[,1], y = Data[,2], z = Data[,3], 
+                         type = "l", color = "blue", pch = 16,
+                         main = "Lorenz63 State Evolution",
+                         xlab = "x1", ylab = "x2", zlab = "x3")
+
+# States producing Observations
+coords_obs <- grafico$xyz.convert(x = Data[(1:nrow(Data)) %% B == 0,1], y = Data[(1:nrow(Data)) %% B == 0,2], z = Data[(1:nrow(Data)) %% B == 0,3])
+
+points(coords_obs, col = "orange", pch = 19, cex=0.5)
+
+legend(x="topright",
+       col=c("blue","orange"),
+       lty=c(1,NA), lwd=2,
+       pch=c(NA,16),
+       legend=c("State evolution","States producing observations"))
+
+# Begin-End
+points(grafico$xyz.convert(x = Data[1,1], y = Data[1,2], z = Data[1,3]), col = "red", pch = 19, cex=1.5)
+
+points(grafico$xyz.convert(x = Data[dim(Data)[1],1], y = Data[dim(Data)[1],2], z = Data[dim(Data)[1],3]), col = "red", pch = 15, cex=1.5)
+
+legend(x="bottomright",
+       col="red",
+       pch=c(19,15), cex=1,
+       legend=c("Begin","End"))
+
+
+######################
+# OBSERVATION PLOT
+#####################
+
+par(mar=c(5,4,4,2))
+plot(x=na.omit(Data[,4]), y=na.omit(Data[,5]),
+     type="b", col="orange", pch=16, cex=0.5,
+     xlab="y1", ylab="y2",
+     main="Non-linear Observations")
+
+points(x=Data[1,4], y=Data[1,5], col = "red", pch = 19, cex=1.5)
+points(x=Data[max((1:nrow(Data))[(1:nrow(Data)) %% B == 0]),4], y=Data[max((1:nrow(Data))[(1:nrow(Data)) %% B == 0]),5], col = "red", pch = 15, cex=1.5)
+
+legend(x="bottomright",
+       col=c("red","orange","red"),
+       pch=c(19,19,15),
+       legend=c("Begin","Observations","End"))
+```
+
+## 1.6 EDA
+
+```{r}
+summary(Data)
+```
+
+
+```{r}
+summary(Obs_Data)
+```
+
+# 2. PARTICLE FILTER
+
+Sequential Importance Sampling - Resampling
+
+## 2.2 Proposal q(x) - Heurístic Prior
+
+```{r}
+set.seed(6543)
+
+
+mu_x2<-max(abs(Obs_Data[,1]), na.rm = TRUE)
+mu_x3<-max(abs(Obs_Data[,2]), na.rm = TRUE)
+
+mu_x1<-max(mu_x2,mu_x3)
+
+#Priors equivalent to proposals
+Prior_Pred_x1<-rnorm(n=1000,mean=0, sd=mu_x1)
+
+Prior_Pred_x2<-rnorm(n=1000,mean=0, sd=mu_x2) #Prior on x2
+
+Prior_Pred_x3<-rnorm(n=1000,mean=0, sd=mu_x3) #Prior on x3
+```
+
+```{r}
+par(mfrow=c(2,2))
+
+title<-c("x1","x2", "x3")
+
+counter<-0
+for(dist in list(Prior_Pred_x1, Prior_Pred_x2, Prior_Pred_x3)){
+counter<-counter+1
+  
+hist(dist, freq = FALSE, main=paste0("Prior on ", title[counter]))
+}
+```
+
+## 2.3 Generación de Partículas en t=1
+
+```{r}
+# Generación de M partículas
+
+x1m<-rnorm(n=M, mean=0, sd=mu_x1)
+
+x2m<-rnorm(n=M, mean=0, sd=mu_x2)
+
+x3m<-rnorm(n=M, mean=0, sd=mu_x3)
+
+```
+
+```{r}
+par(mfrow=c(2,2))
+
+title<-c("x1","x2", "x3")
+
+counter<-0
+for(dist in list(x1m, x2m, x3m)){
+counter<-counter+1
+  
+hist(dist, freq = FALSE, main=paste0("Particles from ", title[counter],"m"))
+rug(dist, col = "blue", lwd = 1, ticksize = 0.2)
+}
+```
+
+## 2.4 Propagación de las partículas hasta t=20
+
+```{r}
+X <-  array(NA, dim = c(M, T, 3))  #Inicialización
+dimnames(X) <- list(
+  Particula = paste0("Partícula m=", 1:M),
+  Tiempo = paste0("t=", 1:T),
+  Variable = c("x1", "x2", "x3")  # o cualquier otro nombre
+)
+
+
+#X[m,t,j]
+
+# Partículas iniciales en t=1
+X[,1,1] <- x1m
+X[,1,2] <- x2m
+X[,1,3] <- x3m
+
+# PROPAGACIÓN
+
+for (t in 1:19){
+  for (m in 1:M){
+    X[m,t+1,]<-Transit(x1=X[m,t,1], x2=X[m,t,2], x3=X[m,t,3], t=t)
+  }
+}
+```
+
+
+```{r eval=FALSE, include=FALSE}
+#Verificación Array
+X[1,1:25,] #Partícula m=1
+X[,20,]    #Tiempo t=20
+X[,17:23,1]# Variable x1 (x_j con j=1)
+```
+
+## 2.5 Weights (Likelihood) for each particle
+
+```{r}
+Weights<-c()
+
+Likelihood<-function(y_obs, y_pred){
+  likelihood1<- dnorm(x=y_obs[1],mean=y_pred[1], sd=sigma_u_set)
+  likelihood2<- dnorm(x=y_obs[2],mean=y_pred[2], sd=sigma_u_set)
+    return(likelihood1*likelihood2)
+}
+
+t=20
+
+y_obs<-Obs_Data[t,]
+
+  if(printing==TRUE){
+  print(y_obs)
+  cat("---------------- \n ---------------- \n")}
+
+for(m in 1:M){
+  y_pred<-Observ(x1=X[m,t,1], x2=X[m,t,2], x3=X[m,t,3], t=t)
+  Weights[m]<-Likelihood(y_obs = y_obs, y_pred = y_pred)
+  
+  
+    if(printing==TRUE){
+    print(y_pred)
+    cat("\n likelihood:", Weights[m],"\n------------\n")}
+}
+```
+
+##2.6 Resampling
+
+```{r}
+Weight_Normalized<-Weights/sum(Weights)
+
+X_resampled<-X[sample(1:M, size = M, replace = TRUE, prob = Weight_Normalized),t,]
+X_resampled[1:20,]
+```
+
+```{r}
+par(mfrow=c(2,2))
+
+title<-c("x1","x2", "x3")
+
+counter<-0
+for(j in c(1:3)){
+counter<-counter+1
+  
+hist(X_resampled[,j], freq = FALSE, main=paste0("Particles from ", title[counter],"\n after resampling"),
+     xlab=title[counter])
+rug(jitter(X_resampled[,j], amount = 0.15), col = "blue", lwd = 1, ticksize = 0.2)
+}
+```
+
+# 3. PARTICLE FILTER LOOP
+
+```{r eval=FALSE, include=FALSE}
+X <-  array(NA, dim = c(M, T, 4))  
+dimnames(X) <- list(
+  Particula = paste0("Partícula m=", 1:M),
+  Tiempo = paste0("t=", 1:T),
+  Variable = c("x1", "x2", "x3", "Weight")
+)
+
+ERROR <-  array(NA, dim = c(T, 7))  
+dimnames(ERROR) <- list(
+  Tiempo = paste0("t=", 1:T),
+  Variable = c("RMSE_x1", "RMSE_x2", "RMSE_x3", "RMSE_x",
+               "RMSE_y1", "RMSE_y2", "RMSE_y")
+)
+
+Y_pred <- array(NA, dim = c(M, T, 2))  
+dimnames(Y_pred) <- list(
+  Particula = paste0("Partícula m=", 1:M),
+  Tiempo = paste0("t=", 1:T),
+  Variable = c("y1", "y2")
+)
+
+# Partículas iniciales en t=1
+X[,1,1] <- x1m
+X[,1,2] <- x2m
+X[,1,3] <- x3m
+
+X[,1,4] <- 1/M #Pesos iniciales
+
+
+#############################
+# PARTICLE FILTER LOOP
+#############################
+
+for (t in 1:T){
+  if((t%%floor(T/100))==0){cat( paste0(floor(100*t/T),"% at", now(), "\n"))}
+  if(t+1==T){break}
+  
+    ERROR[t,1]<-RMSE(pred=mean(X[,t,1]),obs=Full_Data[t,1])
+    ERROR[t,2]<-RMSE(pred=mean(X[,t,2]),obs=Full_Data[t,2])
+    ERROR[t,3]<-RMSE(pred=mean(X[,t,3]),obs=Full_Data[t,3])
+    
+    ERROR[t,4]<-mean(ERROR[t,1:3])
+  
+  if(is.na(Obs_Data[t])){
+      
+      # Si no hay observación, tan sólo propagación (transition)
+      for (m in 1:M){
+        X[m,t+1,1:3]<-Transit(x1=X[m,t,1], x2=X[m,t,2], x3=X[m,t,3], t=t)
+        X[m,t+1,4]<-X[m,t,4]
+      }
+    
+  }else{
+      #Si HAY observación, 1.computar pesos, 2.Resampling, 3. Propagación (resampled)
+      
+      #1. Computar Pesos
+      for (m in 1:M){
+        y_obs<-Obs_Data[t,]
+        Y_pred[m,t,]<-y_pred<-Observ(x1=X[m,t,1], x2=X[m,t,2], x3=X[m,t,3], t=t)
+        X[m,t,4]<-Weights[m]<-X[m,t,4]*Likelihood(y_obs = y_obs, y_pred = y_pred)
+      }
+    
+      ERROR[t,5]<-RMSE(pred=mean(Y_pred[,t,1]),obs=y_obs[1])
+      ERROR[t,6]<-RMSE(pred=mean(Y_pred[,t,2]),obs=y_obs[2])
+    
+      ERROR[t,7]<-mean(ERROR[t,5:6])
+      
+      #2. Resampling (Nuevas partículas para la propagación)
+
+    
+      Weight_Normalized<-Weights/sum(Weights)
+      X_resampled<-X[sample(1:M, size = M, replace = TRUE, prob = Weight_Normalized),t,]
+      
+      
+      #3. Propagación
+      for (m in 1:M){
+        X[m,t+1,1:3]<-Transit(x1=X_resampled[m,1], x2=X_resampled[m,2], x3=X_resampled[m,3], t=t)
+        X[m,t+1,4]<-1/M
+      }
+  }
+}
+```
+
+
+# 4. LOOP INCLUDING PLOTTING
+
+```{r}
+set.seed(786543)
+
+###########################
+# INITIALIZATION
+###########################
+plot_propagation<-T
+plot_resampling<-T
+  plot_Lorenz_dynamics<-T
+
+Xlims<-list(
+  x1=c(-30,40),
+  x2=c(-30,50),
+  x3=c(-80,60)
+)
+
+Ylims<-list(
+  y1=c(-20,60),
+  y2=c(-100,100)
+)
+
+X <-  array(NA, dim = c(M, T, 4))  
+dimnames(X) <- list(
+  Particula = paste0("Partícula m=", 1:M),
+  Tiempo = paste0("t=", 1:T),
+  Variable = c("x1", "x2", "x3", "Weight")
+)
+
+ERROR <-  array(NA, dim = c(T, 7))  
+dimnames(ERROR) <- list(
+  Tiempo = paste0("t=", 1:T),
+  Variable = c("RMSE_x1", "RMSE_x2", "RMSE_x3", "RMSE_x",
+               "RMSE_y1", "RMSE_y2", "RMSE_y")
+)
+
+Y_pred <- array(NA, dim = c(M, T, 2))  
+dimnames(Y_pred) <- list(
+  Particula = paste0("Partícula m=", 1:M),
+  Tiempo = paste0("t=", 1:T),
+  Variable = c("y1", "y2")
+)
+
+# Partículas iniciales en t=1
+X[,1,1] <- x1m
+X[,1,2] <- x2m
+X[,1,3] <- x3m
+X[,1,4] <- 1/M
+
+dir.create("imagenes_gif", showWarnings = FALSE)
+plot_counter<-1
+t<-1
+        #Plot_Initial
+
+            png(sprintf("imagenes_gif/frame%06d.png", plot_counter), width = 600, height = 400)
+            plot_counter<-plot_counter+1
+
+            #Plot_resampling: State parameters
+            par(mfcol=c(3,2), mar=c(4,4,3,3))
+            counter<-0
+            for(dist in list(x1m, x2m, x3m)){
+            counter<-counter+1
+              
+             hist(dist, freq = FALSE, main=c(paste0("t=",t, "\n Initial Set"),NA,NA)[counter],
+           xlab=title[counter], xlim=Xlims[[counter]])
+            abline(v=Full_Data[1,j],col="red",lwd=2)
+           rug(dist, col = "blue", lwd = 1, ticksize = 0.2)
+           }
+           
+           #Plot_resampling: State-plot
+          grafico<- scatterplot3d(x = Full_Data[t,1], y = Full_Data[t,2], z = Full_Data[t,3], 
+                         type = "p", color = "red", pch = 16, cex.symbols = 2,
+                         main = "State (x1, x2, x3)",
+                         xlab = "x1", ylab = "x2", zlab = "x3",
+                         xlim=Xlims[1],ylim=Xlims[2],zlim=Xlims[3])
+          for(m in 1:M){
+          coords_obs <- grafico$xyz.convert(x = X[m,1,1], y =X[m,1,2] , z =X[m,1,3] )
+          points(coords_obs, col = "blue", pch = 19, cex=0.5)
+          }
+          
+          #Plot_resampling: Observation-plot
+           plot(x=Full_Data[t,4], y=Full_Data[t,5],
+               type="n", col="orange", pch=16, cex=2,
+               xlab="y1", ylab="y2",
+               main="Observations (y1, y2)",
+               xlim=Ylims[[1]], ylim=Ylims[[2]])
+           
+          for(m in 1:M){
+          y_pred<-Observ(x1=X[m,t,1], x2=X[m,t,2], x3=X[m,t,3], t=t)
+          points(x=jitter(y_pred[1], amount = 0.15), y=jitter(y_pred[2], amount = 0.15), col = "cyan", pch = 19, cex=1)
+          }
+           
+           points(x=Full_Data[t,4], y=Full_Data[t,5],
+               type="p", col="orange", pch=18, cex=2)
+          
+          plot.new();plot.window(xlim = c(0, 15), ylim = c(0, 15))
+          
+          legend("center",                          # posición de la leyenda
+                 legend = c("Particle histogram (approx. EPDF)", "Particles (jittered)", "True value (latent)", "Observation"),
+                 fill = c("gray", NA, NA,NA),            
+                 border = c("black", NA, NA,NA),        
+                 lty = c(NA, 1, 1, NA),                  
+                 col = c(NA, "blue", "red","orange"),      
+                 pch = c(NA, 16, 16,18),                 
+                 lwd = c(NA, 1, 2,NA),
+                 bty = "n")
+          
+            dev.off()
+
+#############################
+# PARTICLE FILTER LOOP
+#############################
+
+for (t in 1:T){
+  if((t%%floor(T/100))==0){cat( paste0(floor(100*t/T),"% at", now(), "\n"))}
+  if(t+1==T){break}
+  
+    ERROR[t,1]<-RMSE(pred=mean(X[,t,1]),obs=Full_Data[t,1])
+    ERROR[t,2]<-RMSE(pred=mean(X[,t,2]),obs=Full_Data[t,2])
+    ERROR[t,3]<-RMSE(pred=mean(X[,t,3]),obs=Full_Data[t,3])
+    
+    ERROR[t,4]<-mean(ERROR[t,1:3])
+  
+  if(is.na(Obs_Data[t])){
+      
+      # Si no hay observación, tan sólo propagación (transition)
+      for (m in 1:M){
+        X[m,t+1,1:3]<-Transit(x1=X[m,t,1], x2=X[m,t,2], x3=X[m,t,3], t=t)
+        X[m,t+1,4]<-X[m,t,4]
+      }
+    
+  }else{
+      #Si HAY observación, 1.computar pesos, 2.Resampling, 3. Propagación (resampled)
+      
+      #1. Computar Pesos
+      for (m in 1:M){
+        y_obs<-Obs_Data[t,]
+        Y_pred[m,t,]<-y_pred<-Observ(x1=X[m,t,1], x2=X[m,t,2], x3=X[m,t,3], t=t)
+        X[m,t,4]<-Weights[m]<-X[m,t,4]*Likelihood(y_obs = y_obs, y_pred = y_pred)
+      }
+      
+      ERROR[t,5]<-RMSE(pred=mean(Y_pred[,t,1]),obs=y_obs[1])
+      ERROR[t,6]<-RMSE(pred=mean(Y_pred[,t,2]),obs=y_obs[2])
+    
+      ERROR[t,7]<-mean(ERROR[t,5:6])
+    
+      #2. Resampling (Nuevas partículas para la propagación)
+          any_na_lik <- any(is.na(Weights))
+          all_zero_lik <- all(Weights == 0)
+      
+      if (any_na_lik) {
+        cat("¡Warning! Hay NA en las likelihoods en t =", t, "\n")
+      }
+      
+      if (all_zero_lik) {
+        cat("¡Warning! Todas las likelihoods son cero en t =", t, "\n")
+      }
+    
+      Weight_Normalized<-Weights/sum(Weights)
+      X_resampled<-X[sample(1:M, size = M, replace = TRUE, prob = Weight_Normalized),t,]
+      
+          if(plot_resampling==TRUE){
+            png(sprintf("imagenes_gif/frame%06d.png", plot_counter), width = 600, height = 400)
+            plot_counter<-plot_counter+1
+
+            #Plot_resampling: State parameters
+            par(mfcol=c(3,2), mar=c(4,4,3,3))
+            counter<-0
+            for(j in c(1:3)){
+            counter<-counter+1
+              
+             hist(X_resampled[,j], freq = FALSE, main=c(paste0("t=",t, "\n After Resampling"),NA,NA)[counter],
+           xlab=title[counter], xlim=Xlims[[counter]])
+            abline(v=Full_Data[t,j],col="red",lwd=2)
+           rug(jitter(X_resampled[,j], amount = 0.15), col = "blue", lwd = 1, ticksize = 0.2)
+           }
+           
+           #Plot_resampling: State-plot
+          grafico<- scatterplot3d(x = Full_Data[t,1], y = Full_Data[t,2], z = Full_Data[t,3], 
+                         type = "p", color = "red", pch = 16, cex.symbols = 2,
+                         main = "State (x1, x2, x3)",
+                         xlab = "x1", ylab = "x2", zlab = "x3",
+                         xlim=Xlims[1],ylim=Xlims[2],zlim=Xlims[3])
+          for(m in 1:M){
+          coords_obs <- grafico$xyz.convert(x = X_resampled[m,1], y =X_resampled[m,2] , z =X_resampled[m,3] )
+          
+          points(coords_obs, col = "blue", pch = 19, cex=0.5)
+          }
+          
+          #Plot_resampling: Observation-plot
+           plot(x=Full_Data[t,4], y=Full_Data[t,5],
+               type="n", col="orange", pch=16, cex=2,
+               xlab="y1", ylab="y2",
+               main="Observations (y1, y2)",
+               xlim=Ylims[[1]], ylim=Ylims[[2]])
+           
+          for(m in 1:M){
+          y_pred<-Observ(x1=X_resampled[m,1], x2=X_resampled[m,2], x3=X_resampled[m,3], t=t)
+          points(x=jitter(y_pred[1], amount = 0.15), y=jitter(y_pred[2], amount = 0.15), col = "cyan", pch = 19, cex=1)
+          }
+           
+           points(x=Full_Data[t,4], y=Full_Data[t,5],
+               type="p", col="orange", pch=18, cex=2)
+          
+          plot.new();plot.window(xlim = c(0, 15), ylim = c(0, 15))
+          
+          legend("center",                          # posición de la leyenda
+                 legend = c("Particle histogram (approx. EPDF)", "Particles (jittered)", "True value (latent)", "Observation"),
+                 fill = c("gray", NA, NA,NA),            
+                 border = c("black", NA, NA,NA),        
+                 lty = c(NA, 1, 1, NA),                  
+                 col = c(NA, "blue", "red","orange"),      
+                 pch = c(NA, 16, 16,18),                 
+                 lwd = c(NA, 1, 2,NA),
+                 bty = "n")
+          
+            dev.off()
+          }
+      
+      #3. Propagación
+      for (m in 1:M){
+        X[m,t+1,1:3]<-Transit(x1=X_resampled[m,1], x2=X_resampled[m,2], x3=X_resampled[m,3], t=t)
+        X[m,t+1,4]<-1/M
+      }
+  }
+  
+  if(plot_propagation==TRUE){
+    png(sprintf("imagenes_gif/frame%06d.png", plot_counter), width = 600, height = 400)
+    plot_counter<-plot_counter+1
+    
+    #Plot_Propagation
+    par(mfcol=c(3,2), mar=c(4,4,3,3))
+    counter<-0
+    for(j in c(1:3)){
+    counter<-counter+1
+      
+    hist(X[,t+1,j], freq = FALSE, main=c(paste0("t=",t+1, "\n"),NA,NA)[counter],
+         xlab=title[counter], xlim=Xlims[[counter]])
+    abline(v=Full_Data[t+1,j],col="red",lwd=2)
+    rug(jitter(X[,t+1,j], amount = 0.15), col = "blue", lwd = 1, ticksize = 0.2)
+    }
+    
+    #_________________ State-plot
+          grafico<- scatterplot3d(x = Full_Data[t+1,1], y = Full_Data[t+1,2], z = Full_Data[t+1,3], 
+                         type = "p", color = "red", pch = 16, cex.symbols = 2,
+                         main = "State (x1, x2, x3)",
+                         xlab = "x1", ylab = "x2", zlab = "x3",
+                         xlim=Xlims[1],ylim=Xlims[2],zlim=Xlims[3])
+          for(m in 1:M){
+          coords_obs <- grafico$xyz.convert(x = X[m,t+1,1], y =X[m,t+1,2] , z =X[m,t+1,3] )
+          
+          points(coords_obs, col = "blue", pch = 19, cex=0.5)
+          }
+          
+    #_________________ Observation-plot
+           plot(x=Full_Data[t+1,4], y=Full_Data[t+1,5],
+               type="n", col=NA, pch=16, cex=2,
+               xlab="y1", ylab="y2",
+               main="Observations (y1, y2)",
+               xlim=Ylims[[1]], ylim=Ylims[[2]])
+           
+          for(m in 1:M){
+          y_pred<-Observ(x1=X[m,t+1,1], x2=X[m,t+1,2], x3=X[m,t+1,3], t=t)
+          points(x=y_pred[1], y=y_pred[2], col = ifelse((t+1) %% B == 0,"cyan","blue"), pch = 19, cex=1)
+          }
+           
+           points(x=Full_Data[t+1,4], y=Full_Data[t+1,5],
+               type="p", col=ifelse((t+1) %% B == 0,"orange","red"), pch=ifelse((t+1) %% B == 0,18,16), cex=2,
+              )
+    
+
+          plot.new();plot.window(xlim = c(0, 15), ylim = c(0, 15))
+          legend("center",                          # posición de la leyenda
+                 legend = c("Particle histogram (approx. EPDF)", "Particles (jittered)", "True value (latent)", "Observation"),
+                 fill = c("gray", NA, NA,NA),            
+                 border = c("black", NA, NA,NA),        
+                 lty = c(NA, 1, 1, NA),                  
+                 col = c(NA, "blue", "red","orange"),      
+                 pch = c(NA, 16, 16,18),                 
+                 lwd = c(NA, 1, 2,NA),
+                 bty = "n")
+          
+    dev.off()
+  }
+    
+}
+
+#VIDEO CREATION
+av_encode_video(list.files("imagenes_gif", full.names = TRUE), 
+                output = "ParticleFilter.mp4", framerate = 30)
+
+#unlink("imagenes_gif", recursive = TRUE) #Borrar las imágenes
+
+```
+
+# 5. RMSE
+
+```{r}
+par(mfrow=c(2,2), mar=c(4,4,4,4))
+
+counter<-0
+for(j in 1:4){
+counter<-counter+1
+
+  plot(x=seq(1:T), y=ERROR[,j], main=colnames(ERROR)[j], type="l",
+     xlab="t", ylab="RMSE", lwd=c(1,1,1,2)[counter])
+}
+
+counter<-0
+par(mfcol=c(2,2))
+for(j in 5:7){
+counter<-counter+1
+plot(x=seq(1:T)[seq(1:T)%%B ==0], y=na.omit(ERROR[,j]), main=colnames(ERROR)[j], type="l",
+     xlab="t", ylab="RMSE", lwd=c(1,1,2)[counter], )
+}
+```
+
+
+# 6. PARTICLE PRECISION 
+
+```{r}
+#COMPUTATION
+
+VARIANCE <-  array(NA, dim = c(T, 7))  
+dimnames(VARIANCE) <- list(
+  Tiempo = paste0("t=", 1:T),
+  Variable = c("SD_x1", "SD_x2", "SD_x3", "SD_x",
+               "SD_y1", "SD_y2", "SD_y")
+)
+
+for(t in 1:T){
+  for(j in 1:3){VARIANCE[t,j]<- sd(X[,t,j])*(M-1)/M }
+  j<-4; VARIANCE[t,j]<- mean(VARIANCE[t,1:3]);
+  for(j in 5:6){VARIANCE[t,j]<- sd(Y_pred[,t,j-4], na.rm = TRUE)*(M-1)/M }
+  j<-7; VARIANCE[t,j]<- mean(VARIANCE[t,5:6]);
+  
+}
+
+
+#PLOTTING
+par(mfrow=c(2,2), mar=c(4,4,4,4))
+
+counter<-0
+for(j in 1:4){
+counter<-counter+1
+
+  plot(x=seq(1:T), y=VARIANCE[,j], main=colnames(VARIANCE)[j], type="l",
+     xlab="t", ylab="SD", lwd=c(1,1,1,2)[counter])
+}
+
+counter<-0
+par(mfcol=c(2,2))
+for(j in 5:7){
+counter<-counter+1
+plot(x=seq(1:T)[seq(1:T)%%B ==0], y=na.omit(VARIANCE[,j]), main=colnames(VARIANCE)[j], type="l",
+     xlab="t", ylab="SD", lwd=c(1,1,2)[counter])
+}
+```
+
+
